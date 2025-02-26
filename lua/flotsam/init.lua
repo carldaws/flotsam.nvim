@@ -66,7 +66,7 @@ function M.open_floating_terminal(command)
 			end
 		end, 100)
 
-		vim.api.nvim_buf_set_keymap(buf, "t", "<Esc><Esc>",
+		vim.api.nvim_buf_set_keymap(buf, "t", "<Esc>",
 			"<C-\\><C-n>:lua require('flotsam').hide_terminal('" .. command .. "')<CR>",
 			{ noremap = true, silent = true })
 	end
