@@ -3,7 +3,59 @@ local M = {}
 M.mappings = {}
 M.terminals = {}
 
-function M.open_floating_terminal(command)
+local function calculate_window_config(position)
+	local width = vim.o.columns
+	local height = vim.o.lines
+
+	local padding = 2
+	local cfg = {
+		style = "minimal",
+		relative = "editor",
+		border = "rounded",
+	}
+
+	if position == "bottom" then
+		cfg.width = width - padding * 2
+		cfg.height = math.floor(height / 2)
+		cfg.row = height - cfg.height - padding
+		cfg.col = padding
+	elseif position == "top" then
+		cfg.width = width - padding * 2
+		cfg.height = math.floor(height / 2)
+		cfg.row = padding
+		cfg.col = padding
+	elseif position == "left" then
+		cfg.width = math.floor(width / 2)
+		cfg.height = height - padding * 2
+		cfg.row = padding
+		cfg.col = padding
+	elseif position == "right" then
+		cfg.width = math.floor(width / 2)
+		cfg.height = height - padding * 2
+		cfg.row = padding
+		cfg.col = width - cfg.width - padding
+	else -- center
+		cfg.width = math.floor(width * 0.8)
+		cfg.height = math.floor(height * 0.8)
+		cfg.row = math.floor((height - cfg.height) / 2)
+		cfg.col = math.floor((width - cfg.width) / 2)
+	end
+
+	return cfg
+end
+
+function M.snap_terminal(command, position)
+	local term = M.terminals[command]
+	if not (term and term.win and vim.api.nvim_win_is_valid(term.win)) then return end
+
+	local cfg = calculate_window_config(position)
+	vim.api.nvim_win_set_config(term.win, cfg)
+	term.position = position
+end
+
+function M.open_floating_terminal(command, position)
+	position = position or "center"
+
 	local term_data = M.terminals[command]
 	local buf = term_data and term_data.buf
 	local win = term_data and term_data.win
@@ -19,56 +71,29 @@ function M.open_floating_terminal(command)
 		M.terminals[command] = { buf = buf }
 	end
 
-	local width = vim.api.nvim_get_option_value("columns", {})
-	local height = vim.api.nvim_get_option_value("lines", {})
-
-	local win_height = math.ceil(height * 0.8)
-	local win_width = math.ceil(width * 0.8)
-	local row = math.ceil((height - win_height) / 2)
-	local col = math.ceil((width - win_width) / 2)
-
-	win = vim.api.nvim_open_win(buf, true, {
-		style = "minimal",
-		relative = "editor",
-		width = win_width,
-		height = win_height,
-		row = row,
-		col = col,
-		border = "rounded",
-	})
+	local cfg = calculate_window_config(position)
+	win = vim.api.nvim_open_win(buf, true, cfg)
 
 	M.terminals[command].win = win
+	M.terminals[command].position = position
 
 	if vim.fn.bufname(buf) == "" then
 		local shell = os.getenv("SHELL") or "/bin/sh"
-		local job_id = vim.fn.termopen(shell, {
-			on_exit = function()
-				if M.terminals[command] and M.terminals[command].win then
-					local win_to_close = M.terminals[command].win
-					if win_to_close and vim.api.nvim_win_is_valid(win_to_close) then
-						vim.api.nvim_win_close(win_to_close, true)
-					end
-				end
-
-				if vim.api.nvim_buf_is_valid(buf) then
-					vim.api.nvim_buf_delete(buf, { force = true })
-				end
-
-				M.terminals[command] = nil
-			end
-		})
-
+		local job_id = vim.fn.termopen({ shell, "-c", command .. "; exec " .. shell })
 		vim.b[buf].terminal_job_id = job_id
 
-		vim.defer_fn(function()
-			if vim.api.nvim_buf_is_valid(buf) then
-				vim.api.nvim_chan_send(job_id, command .. "\n")
-			end
-		end, 100)
-
+		-- Exit terminal and hide on <Esc><Esc>
 		vim.api.nvim_buf_set_keymap(buf, "t", "<Esc><Esc>",
 			"<C-\\><C-n>:lua require('flotsam').hide_terminal('" .. command .. "')<CR>",
 			{ noremap = true, silent = true })
+
+		-- Movement keys to reposition
+		local positions = { h = "left", l = "right", j = "bottom", k = "top", c = "center" }
+		for key, pos in pairs(positions) do
+			vim.api.nvim_buf_set_keymap(buf, "t", "<Esc>" .. key,
+				"<C-\\><C-n>:lua require('flotsam').snap_terminal('" .. command .. "', '" .. pos .. "')<CR>i",
+				{ noremap = true, silent = true })
+		end
 	end
 
 	vim.api.nvim_command("startinsert")
@@ -102,3 +127,4 @@ function M.setup(opts)
 end
 
 return M
+
